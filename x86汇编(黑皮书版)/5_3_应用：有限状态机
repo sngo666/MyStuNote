@@ -1,0 +1,61 @@
+## 条件结构应用：有限状态机
+
+定义：有限状态机是根据输入改变状态的机器或程序， 有限状态机的工作结构类似于有个有向图，一个节点担任输入节点，一个或多个状态节点可以作为种植节点。
+
+* 验证有符号整数
+
+>
+> ```asm
+> INCLUDE Irvine32.inc
+> ENTER_KEY = 13
+> .data 
+> InvalideInputMsg BYTE "Invalide Input", 13, 10, 0
+>
+> code 
+> main PROC
+> call Clrscr
+>
+> StateA:
+>   call Getnext\
+>   cmp al, '+'
+>   je StateB
+>   cmp al, '-'
+>   je StateC
+>   call DisplayErrorMsg
+>   jmp Quit
+>
+> StateB:
+>   call Getnext
+>   call isDigit
+>   jz StateC
+>   call DisplayErrorMsg
+>   jmp Quit
+>
+> StateC:
+> call Getnext
+> call isDigit
+> jz StateC
+> cmp al, ENTER_KEY
+> je Quit
+> call DisplayErrorMsg
+> jmp Quit
+>
+> Quit:
+>   call Crlf
+>   exit
+> main ENDP
+>
+>
+> Getnext PROC
+>   call ReadChar
+>   call WriteChar
+> Getnext ENDP
+>
+> DisplayErrorMsg PROC
+>   push edx
+>   mov edx, OFFSET InvalidInputMsg
+>   call WriteString
+>   pop edx
+>   ret
+> DisplayErrorMsg ENDP
+> END main
