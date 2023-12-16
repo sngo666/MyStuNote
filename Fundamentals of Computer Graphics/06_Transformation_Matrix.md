@@ -269,3 +269,5 @@ P_{xy} = \begin{bmatrix}
 \mathbf{u} & \mathbf{v} & \mathbf{e} \\ 0 & 0 & 1
 \end{bmatrix}P_{uv}
 $$
+
+那么变换也就是相应矩阵的逆变换，从变换分解角度来说，就是先进行一个平移的逆操作，在进行响应的旋转矩阵的逆变换。
