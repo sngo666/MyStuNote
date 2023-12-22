@@ -27,7 +27,7 @@ $$
 也就是：
 
 $$
-h = \frac{\mathbf{e} + \mathbf{l}}{||\mathbf{e} + \mathbf{l}||}
+\mathbf{h} = \frac{\mathbf{e} + \mathbf{l}}{||\mathbf{e} + \mathbf{l}||}
 $$
 
 $$
@@ -38,4 +38,9 @@ p就是反映高亮强度的指数，越高光亮越集中。
 
 ## 艺术着色
 
+艺术阴影是为了模仿人类艺术家的绘画而设计的.
 
+《Computer drafting of stones, wood, plant and ground materials》
+《Automatic illustration of 3D geometric models: lines》
+《Comprehensible rendering of 3-D shapes》
+《shading in two dimensions》
