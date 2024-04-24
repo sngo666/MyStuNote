@@ -149,7 +149,7 @@ $$
 d\omega = \frac{dA\cos\theta}{r^2}
 $$
 
-$r$表示从光源到点p处的距离，$\theta$表示微表面(光源)的法线和出射到点p之间的光线形成的夹角。这一转换可以被看作是，将这个表面的光照强度折损成朝向点p的强度，并折损距离上的损失(想象球壳捕获能量，与球壳面积成比例，因此是$r^2$)
+$r$表示从光源到点p处的距离，$\theta$表示微表面(光源)的法线和出射到点p之间的光线形成的夹角。这一转换可以被看作是，将这个表面的光照强度折损成朝向点p的强度，并考虑距离上的损失(想象球壳捕获能量，与球壳面积成比例，因此是$r^2$)
 这个式子清晰反映了Intensity和Irradiance之间的关系，可见Irradiance相较于前者，性质上更”靠近“Radiance。
 
 $$
@@ -176,3 +176,159 @@ $$
 $$
 f_r(p, \omega_o, \omega_i) = \frac{dL_o(p, \omega_o)}{L_i(p, \omega_i)\cos\theta_id\omega_i}
 $$
+
+对于$f_r$的理解要基于一个概念，就是其只反映一个入射方向与出射方向的Radiance的比例，并不代表出射方向的Radiance，也就是说，仅仅代表出射方向的一个微分，表面出射方向的Radiance应当由所有入射方向的Irradiance共同决定(在BRDF中)，这一点能够更好地理解公式的分子为什么是一个Radiance的微分。最后，如果对于为什么是Irradiance有疑问，答案很简单：因为入射点p。
+需要特别说明的是，BRDF遵循两个特质：
+
+1. 对于所有的入射和出射方向,$f_r(p, \omega_i, \omega_o) = f_r(p, \omega_o, \omega_i)$
+2. 反射光的能量总是小于等于入射光的能量：
+
+$$
+\int_{H^2(\bold{n})} f_r(p, \omega_o, \omega') \cos \theta' d\omega' \le 1
+$$
+
+对于半球上指定出射方向，我们对于所有入射方向的Irradiance和BRDF函数进行积分计算，得出该表面的半球反射率:
+
+<span id="rhohd">
+
+$$
+\rho_{hd}(\omega_o) = \int_{H^2(\bold{n})} f_r(p, \omega_o, \omega_i) |cos\theta_i|d\omega_i
+$$
+
+</span>
+
+这个特质同时表明了另一件事：在固定的某个入射和出射方向上，其BRDF并不一定小于等于1.
+关于BRDF最后要表示是，对于hemispherical-hemispherical reflectance，也就是半球-半球反射率，对于微表面所在半球面，分别考虑所有入射方向和所有出射方向的积分，以求解$\rho_{hh}$:
+
+$$
+\rho_{hh} = \frac{1}{\pi} \int_{H^2(\bold{n})}\int_{H^2(\bold{n})}f_r(p, \omega_o, \omega_i) |\cos \theta_o\cos\theta_i|d\omega_i d\omega_o
+$$
+
+bidirectional transmittance distribution function(BTDF)描述了透射光的分布，使用$f_t(p, \omega_o, \omega_i)$，需要注意的是，$\omega_i$与$\omega_o$位于点p周围的相反半球，此外，BTDF不满足上述的互易性。
+
+bidirectional scattering distribution function(BSDF)是BRDF与BTDF相结合的产物：
+
+$$
+dL_o(p, \omega_o) = f(p, \omega_o, \omega_i) L_i(p, \omega_i) |cos\theta_i| d\omega_i
+$$
+
+最后，鉴于透射方程的加入，可以完成基于整个球体的反射方程：
+
+$$
+L_o(p, \omega_o) = \int_{S^2}f(p, \omega_o, \omega_i) L_i(p, \omega) |cos \theta_i| d\omega_i
+$$
+
+### BSSRDF
+
+bidirectional scattering surface reflectance distribution function (BSSRDF)用于描述亚表面光传输的材料散射形式，对于分布函数$S(p_o, \omega_o, p_i, \omega_i)$描述了入射点$p_i$以及角度$\omega_i$的Flux在对应的出射点恶化出射角度的Radiance之间的关系。
+
+$$
+S(p_o, \omega_o, p_i, \omega_i) = \frac{dL_o(p_o, \omega_o)}{d\Phi(p_i, \omega_i)}
+$$
+
+很明显，随着两点之间距离的递增，$S$也许会以一个非常陡峭的倍率下降。
+BSSRDF与BRDF最大的区别在于，前者发生在一个点上，而后者明显不是，这意味着积分运算会复杂许多：
+
+$$
+L_o(p_o, \omega_o) = \int_A\int_{H^2(\bold{n})} S(p_o, \omega_o, p_i, \omega_i)L_i(pi, \omega) |\cos\theta_i| d\omega_idA
+$$
+
+在计算云或者烟雾中的光线传播基于同样的效应。
+
+## Light Emission
+
+原子在高于绝对零度的情况下运动，带有电荷的原子粒子运动导致发射一定波长的电子辐射，基于此诞生了许多不同种类的光源。
+
+Luminous efficacy(光效)衡量了将功率转化为可见光的效率，对于人类来说，不可见光几乎没有价值。其表现为发射的光度量和辐射量(在所有波长发射的总功率)的比率：
+
+$$
+\frac{\int \Phi_e(\lambda) V(\lambda) d\lambda}{\int\Phi_i(\lambda)d\lambda}
+$$
+
+$V(\lambda)$表示光谱响应曲线。
+光效也可以被定义为表面上某一点的发光亮度与Irradiance的比值。
+
+### Blackbody Emitters
+
+黑体表示为尽可能有效的将能量转换为电磁辐射，这在现实中不可能被实现，但是可以用来表示发射波长和温度的函数关系。黑体意味着完美吸收了所有的入射能量，并不反射任何能量，普朗克定律给出了黑体发出的辐射率和波长的函数关系：
+
+$$
+L_e(\lambda, T) = \frac{2hc^2}{\lambda^5(e^{hc/\lambda k_bT}-1)}
+$$
+
+$k_b$表示玻尔兹曼(Boltzmann)常数$1.3806488\times10^{-23}J/K$，$K$表示温度。理想状态下，黑体向所有方向均匀辐射。
+
+随着温度的升高，更多的发射光处于可见频率内(380nm至780nm之间)，并且发射总能量有迅猛的增长。
+最后，要注意单位统一。
+
+* 非黑体辐射
+
+基尔霍夫定律描述了非黑体的辐射，任何频率下的发射Radiance分布等于完美黑体在该频率下的Radiance乘以在该频率上被物体吸收的入射辐射的分数，吸收的辐射率等于1减去反射的量。
+
+$$
+L'_e(T, \omega, \lambda) = L_e(T, \lambda)(1 - \rho_{hd}(\omega))
+$$
+
+普朗克定律给出了$Le$，$\rho_{hd}(\omega)$给出了半球方向的反射率，正是[前文](#rhohd)已经给出的。
+
+Stefan–Boltzmann定律给出了在点p的辐射出射度：
+
+$$
+M(p) = \sigma T^4
+$$
+
+$\sigma$代表了Stefan–Boltzmann常数$5.67032\times Wm^{-2}K^{-4}$
+可以注意到，所有频率上的总发射以$T^4$的速率倍增，这意味着温度加倍会使发射的总能量增加16倍。
+
+如果发射器的发射光在某一个温度下与黑体分布相似，可以说发射器具有相应的色温。找到具体色温的方法取发光器最高的波长，使用Wien’s displacement定理给定温度下合体发射最大值的波长：
+
+$$
+\lambda_{max} = \frac{b}{T}
+$$
+
+$b$代表了Wien’s displacement常数 $2.8977721 \times 10^{-3}mK$
+白炽灯的色温一般在2700K左右，卤钨灯的色温在3000K左右，荧光灯的亮度范围在2700K到6500K之间，温度超过5000K被描述为冷，而2700~3000K被描述为暖。
+
+* 其他标准
+
+国际委员会CIE制定了另外一套对于光发射分布的定义。
+标准光源A对应于黑体辐射体约2856K。
+其他的在有需要时再作补充。
+
+## Representing Spectral Distributions
+
+现实中的光谱会很复杂，为了能够正确表示包含各种复杂光谱的场景图像，必须要让渲染器有效准确表示光谱分布，从定义常数到表示光谱，使用nm作为表示波长的基本单位。
+一般来说，pbrt只会关注肉眼能够捕捉到的光谱波长，也就是大约400~380之间。可以使用一组基函数和对应的系数去表示SPD(Spectral power distributions)，也可以使用一组离散的点，并藉由线性插值完成SPD的存储和再现。
+
+## color
+
+颜色感知的三刺激理论认为，所有可见光谱分布都可以使用三个标量值准确地表示给人类观察者。其基础是眼睛中有三种类型的感光视锥细胞，每种细胞对不同波长的光敏感。
+
+对于光谱分布$S(\lambda)$和三个刺激匹配函数$m_{1,2,3}(\lambda)$相乘得到相应的刺激值$v_i$
+
+$$
+v_i = \int S(\lambda)m_i(\lambda)d\lambda
+$$
+
+匹配函数给出了一个颜色空间，通过三刺激值的3D向量空间：两个光谱之和的三刺激值由它们的三刺激值和与已缩放的光谱相关联的三刺激值之和给出。
+给定一个光谱分布函数$S(\lambda)$，其xyz色彩空间坐标通过与对应的光谱匹配曲线的积来计算
+
+$$
+x_\lambda = \frac{1}{\int_\lambda Y(\lambda)d\lambda}\int_\lambda S(\lambda)X(\lambda) d\lambda\\
+y_\lambda = \frac{1}{\int_\lambda Y(\lambda)d\lambda}\int_\lambda S(\lambda)Y(\lambda) d\lambda\\\
+z_\lambda = \frac{1}{\int_\lambda Y(\lambda)d\lambda}\int_\lambda S(\lambda)Z(\lambda) d\lambda\\
+$$
+
+CIE $Y(\lambda)$三刺激曲线与用于定义光度量的$V(A)$光谱响应曲线成比例：
+
+$$
+V(A) = 683 Y(A)
+$$
+
+对于两个光谱的简单1D积分，通过黎曼积分来计算：
+
+$$
+\int^{\lambda_{max}}_{\lambda_{min}} f(\lambda)g(\lambda) \approx \sum^{\lambda_{max}}_{\lambda = \lambda_{min}} f(\lambda)g(\lambda)
+$$
+
+

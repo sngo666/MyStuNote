@@ -26,7 +26,6 @@ M_{vp} = \begin{bmatrix}
 \end{bmatrix}
 $$
 
-
 ## 正交投影变换
 
 $$
