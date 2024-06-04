@@ -556,4 +556,3 @@ bool SameHemisphere(Vector3f w, Vector3f wp) {
 
 ### 使用辐射积分
 
-
