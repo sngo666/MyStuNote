@@ -71,6 +71,8 @@ $$
 
 考虑到实时运算需求，必须对于D,G和F进行近似计算。
 
+### 法线分布函数D
+
 Burley发现，长尾正态分布函数 (NDF) 非常适合真实世界的曲面。Walter中描述的 GGX 分布是一种在高光部分具有长尾落差和短峰值的分布，其公式简单，适合实时实现。它也是现代物理渲染器中的常用模型，相当于Trowbridge-Reitz分布。
 
 $$
@@ -191,4 +193,107 @@ vec3 F_Schlick(float u, vec3 f0, float f90) {
 
 为了方便，可以将$f_{90}$的菲涅尔反射率定义为1。对于该值的进一步定义在后文进行讨论。
 
+### 漫反射 BRDF
 
+在漫反射阶段，我们首先给出漫反射项的定义：
+
+$$
+f_d(\bold{v}, \bold{l}) = \frac{c}{\pi}\frac{1}{|\bold{n}\cdot\bold{v}||\bold{n}\cdot\bold{l}|} \int_\Omega D(\bold{m}, \alpha) G(\bold{v}, \bold{l}, \bold{m})(\bold{v}\cdot \bold{m})(\bold{l}\cdot \bold{m})d\bold{m}
+$$
+
+可以使用最简单的漫反射染色，filament选择的就是这种方式：
+
+$$
+f_d(\bold{v}, \bold{l}) = \frac{c}{\pi}
+$$
+
+Disney的模型考略了粗糙度，但是对于移动平台来说可能会带来比较大的运算负荷：
+
+$$
+f_d(\bold{v}, \bold{l}) = \frac{c}{\pi}F_{Schlick}(\bold{n},\bold{l}, 1, f_{90}) F_{Schlick}(\bold{n},\bold{v}, 1, f_{90}) 
+$$
+
+$$
+f_{90} = 0.5 + 2\cdot \alpha cos^2(\theta_d)
+$$
+
+对于一块使用完全粗糙介电材料，相比于简单朗伯漫射BRDF，迪斯尼BRDF在掠过角处表现出一些很好的逆反射。
+
+### 标准模型总结
+
+镜面项： 使用的是Cook-Torrance镜面微表面模型，具有GGX正态分布函数、Smith-GGX高度相关能见度函数和Schlick菲涅尔函数。
+漫反射项： 使用一个朗伯反射模型
+
+给出一个完整的实现作为参考：
+
+```glsl
+float D_GGX(float NoH, float a) {
+    float a2 = a * a;
+    float f = (NoH * a2 - NoH) * NoH + 1.0;
+    return a2 / (PI * f * f);
+}
+
+vec3 F_Schlick(float u, vec3 f0) {
+    return f0 + (vec3(1.0) - f0) * pow(1.0 - u, 5.0);
+}
+
+float V_SmithGGXCorrelated(float NoV, float NoL, float a) {
+    float a2 = a * a;
+    float GGXL = NoV * sqrt((-NoL * a2 + NoL) * NoL + a2);
+    float GGXV = NoL * sqrt((-NoV * a2 + NoV) * NoV + a2);
+    return 0.5 / (GGXV + GGXL);
+}
+
+float Fd_Lambert() {
+    return 1.0 / PI;
+}
+
+void BRDF(...) {
+    vec3 h = normalize(v + l);
+
+    float NoV = abs(dot(n, v)) + 1e-5;
+    float NoL = clamp(dot(n, l), 0.0, 1.0);
+    float NoH = clamp(dot(n, h), 0.0, 1.0);
+    float LoH = clamp(dot(l, h), 0.0, 1.0);
+
+    // perceptually linear roughness to roughness (see parameterization)
+    float roughness = perceptualRoughness * perceptualRoughness;
+
+    float D = D_GGX(NoH, roughness);
+    vec3  F = F_Schlick(LoH, f0);
+    float V = V_SmithGGXCorrelated(NoV, NoL, roughness);
+
+    // specular BRDF
+    vec3 Fr = (D * V) * F;
+
+    // diffuse BRDF
+    vec3 Fd = diffuseColor * Fd_Lambert();
+
+    // apply lighting...
+}
+```
+
+### 提升BRDF
+
+能量守恒是良好BRDF的关键要素之一。针对此定理提出两点问题：
+
+#### 漫反射能量增益
+
+朗伯漫反射不考虑在表面反射的光线。需要明确漫反射与镜面反射带来的反射后光线是否小于等于入射光线。
+
+#### 漫反射能量衰减
+
+Cook-Torrance微表面镜面反射模型试图模拟这样一件事：在粗糙表面的单词光反射，这种近似势必会造成光线的能量损失，对于一个粗糙表面(指存在描述粗糙信息)，可以很轻松理解，会发生更多的多重散射事件，这意味着更多的能量衰减。
+随着粗糙程度的增加，能量的衰减是加剧的。
+
+**Multiple-Scattering Microfacet BSDFs with the Smith Model**提出了多散射微表面，但是filament仅仅给出了多散射BRDF的随机评估，因此这种解决方案并不适用于实时渲染，**Revisiting Physically Based Shading at Imageworks**给出了一种新的方案，通过增加一个能量补偿项作为额外的BRDF波瓣：
+
+$$
+f_{ms}(\bold{l}, \bold{v}) = \frac{(1 - E(\bold{l}))(1 - E(\bold{v}))F^2_{avg} E_{avg}}{\pi(1 - E_{avg})(1 - F_{avg}(1 - E_{avg}))}
+$$
+
+E是对于镜面反射BRDF的方向性albedo，且假定$f_0 = 1$:
+
+$$
+E(\bold{l}) = \int_\Omega f(\bold{l}, \bold{v})(\bold{n}, \bold{v})d \bold{v}
+$$
