@@ -297,3 +297,286 @@ E是对于镜面反射BRDF的方向性albedo，且假定$f_0 = 1$:
 $$
 E(\bold{l}) = \int_\Omega f(\bold{l}, \bold{v})(\bold{n}, \bold{v})d \bold{v}
 $$
+
+$E_{avg}$是E的余弦加权平均值：
+
+$$
+E_{avg} = 2\int^1_0E(\mu)\mu d\mu
+$$
+
+同样，$F_{avg}$是菲涅尔项的余弦加权平均值：
+
+$$
+F_{avg} = 2\int^1_0F(\mu)\mu d\mu
+$$
+
+E和$E_{avg}$都可以预先计算并存储在查找表中，而$F_{avg}$在使用Schlick近似法时可以大大简化。
+
+### 参数化
+
+filament使用的材质参数系统是基于Disney的渲染方案进行参数的优化。
+下面是各项参数：
+
+**BaseColor**: 非金属表面的扩散反照率和金属表面的镜面颜色。
+**Metallic**: 表面看起来是介质(0.0)还是导体(1.0),通常用作二进制值(0或1)。
+**Roughness**: 表面的光滑度(0.0)或粗糙度(1.0),光滑表面带来更加清晰的反射。
+**Reflectance**: 介质表面法线入射时的菲涅尔反射率，这取代了明确的折射率。
+**Emissive**：额外的漫反射反照率，用于模拟发射性表面。该参数主要用于HDR流水线中的Bloom pass。
+**Ambient occlusion**: 定义表面点可以获得多少环境光。用于描述每个像素的阴影系数介于0.0和1.0之间。
+
+参数的定义并非绝对的，可能会进行一定的线性/非线性变换，例如，BaseColor可以用sRGB空间表示，并在发送给着色器之前转换为线性空间。用0到255之间的灰度值（从黑到白）来表示metallic、roughness和reflectance对开发者来说也很有用。
+
+### 对参数的重新映射
+
+基于主流的标准材质模型，filament对于baseColor,roughness和reflectance进行了重新映射。
+
+#### **BaseColor** remapping
+
+材料的**BaseColor**受其 "金属性 "的影响。电介质具有非彩色镜面反射，但其**BaseColor**保留为漫反射色。而导体则将**BaseColor**作为镜面反射色，没有漫反射成分。
+照明方程必须使用漫反射颜色和$f_0$而不是**BaseColor**。
+**漫反射**颜色可以很容易地从**BaseColor**中计算出来:
+
+```glsl
+vec3 diffuseColor = (1.0 - metallic) * baseColor.rgb;
+```
+
+#### **Reflectance** remapping
+
+##### 电介质
+
+菲涅尔项依赖于$f_0$，即正常入射角下的镜面反射率，对于电介质是消色差的:
+
+$$
+f_0 = 0.16 \cdot reflectance^2
+$$
+
+这样可以保证将$f_0$映射到能代表普通介质表面(4%反射率)到宝石(8~16%反射率)，在输入**Reflectance**为0.5时提供了4%的菲涅尔反射率。总体上来说保证了一条斜率逐渐升高的平滑曲线。
+
+如果折射率(Index of Refraction)已知, 例如，空气-水界面的折射率为1.33，则菲涅尔反射率可按下式计算：
+
+$$
+f_0 = \frac{(n_{ior} - 1)^2}{(n_{ior} + 1)^2}
+$$
+
+也顺便给出反推公式，仅基于上式：
+
+$$
+n_{ior} = \frac{2}{1 - \sqrt{f_0}} - 1
+$$
+
+此外，在掠入射角的情况下，所有材料的菲涅尔反射率都被定义为100%。
+
+##### 导体
+
+金属表面的镜面反射是有色差的：
+
+$$
+f_0 = baseColor \cdot metallic
+$$
+
+##### 兼具电介质和导体
+
+```glsl
+vec3 f0 = 0.16 * reflectance * reflectance * (1.0 - metallic) + baseColor * metallic;
+```
+
+#### **Roughness** remapping
+
+定义一个感知粗糙度量(perceptualRoughness), 描述开发者定义的粗糙度，并将其重新映射到感知线性范围。
+
+$$
+\alpha = perceptualRoughness^2
+$$
+
+通过这种处理，保证物体在低Roughness的情况下，表现出变化更加缓慢的光滑特性。相较于原始Roughness，达到一个相同的粗糙表面效果所需要的值更高。
+如果没有这种重映射，闪亮的金属表面就只能局限在0.0和0.05之间的极小范围内。
+Disney出于类似的动机进行了重映射，filament选择简单的平方同时兼顾了低廉的计算成本。
+
+另外一个问题是，有限的浮点运算也许会导致些许问题，在移动端GPU上，粗糙度一般是以半浮点数(16bit)的形式实现的。为了保证诸如这样的式子$\frac{1}{perceptualRoughness^4}$不会使分母过小被表示为0，使得perceptualRoughness的最小值不能低于$2^{-14}$或者说$6.1 \times 10^{-5}$，因此省去计算过程，结论上roughness不能够小于$6.274 \times 10^{-5}$。
+
+最后，在粗糙度(十分)接近0时会产生几乎不可见的高光，粗糙度应该处于一个安全的范围，保证反射的lobe足够宽到可以被观察到(我猜想是出于这个需求)，另一个需求是可以纠正粗糙度过低造成的镜面反差。
+
+### 混合和分层
+
+材料的混合和分层实际上是对材料模型的各种参数进行插值。比如在闪亮的金属铬和光滑的塑料之间进行插值，以模拟出更多的材料视觉效果。
+
+### 总结：如何创建真实材质
+
+#### 所有材料
+
+**Base color**：除micro-occlusion外，应不提供照明信息
+
+**Metallic**：应当接近于二进制，理论上纯导体应当为1，纯电介质应当为0。
+
+#### 非金属材料
+
+**Base color**：代表反射颜色，应为50-240（严格范围）或30-240（容许范围）范围内的sRGB值。
+
+**Metallic**：为0或尽可能接近0.
+
+**Reflectance**：如果找不到合适的值，应将其设置为127sRGB（0.5线性，4%反射率）。不要使用低于 90 sRGB（0.35线性，2%反射率）的值。
+
+#### 金属材料
+
+**Base color**：代表镜面颜色和反射率。使用亮度值为67%到100%（170-255 sRGB）。考虑到非金属成分，氧化或脏污金属的亮度应低于清洁金属。
+
+**Metallic**：为1或尽可能接近1.
+
+**Reflectance**：会被忽略（根据**Base color**计算方式）。
+
+### 涂层模型
+
+多层材料相当常见，特别是在标准层上有一层薄薄的半透明层的材料。这类材料在现实世界中的例子包括汽车漆、苏打罐、漆木、丙烯酸等。
+
+透明涂层可以作为标准材料模型的扩展进行模拟，相当于在原有的反射模型表面上再考虑一层进行镜面BRDF计算，为了简化实现，将透明图层始终定义为各向同性。而底层理论上可以是任何一种材料。
+
+此外需要考虑能量的进出损失，但是简化了涂层和底部材料之间的反射和折射现象。
+透明涂层将采用与标准模型相同的Cook-Torrance microfacet BRDF进行建模。由于透明涂层始终是各向同性和介电的，粗糙度值很低。因而选择更加便宜的DFG项，并保证尽可能不会影响视觉质量。
+
+依据**A Microfacet Based Coupled Specular-Matte BRDF Model with Importance Sampling**给出了代替Smith-GGX的可见性项：
+
+$$
+V(l, h) = \frac{1}{4(l\cdot h)^2}
+$$
+
+这定义并不符合物理，仅仅以其简单性符合于实时渲染的场景。
+
+进一步地，镜面BRDF的菲涅尔项需要$f_0$，即正常入射角下的镜面反射率。这个参数可以通过界面的折射率计算出来。我们假设透明涂层由聚氨酯或类似材料制成，聚氨酯是涂料和清漆中常用的化合物。空气-聚氨酯界面的折射率为 1.5，由此可以推算出$f_0$：
+
+$$
+f_0(1.5) = \frac{(1.5 - 1)^2}{(1.5 + 1)^2} = 0.04
+$$
+
+这相当于4%的菲涅尔反射率，我们知道这与普通电介质材料有关。
+
+我们知道反射模型由镜面反射($f_r$)和漫反射($f_d$)组成，因而作进一步的整合：
+
+$$
+f(v, l) = f_d(v, l)(1 - F_c) + f_r(v, l)(1 - F_c) + f_c(v, l)
+$$
+
+使用$F_c$定义透明图层BRDF的菲涅尔项。
+
+#### 透明图层的参数
+
+除了上文的BRDF提供的参数，还包含额外两个参数：
+
+**ClearCoat**: 透明涂层的强度。定义为0和1之间的标量。
+**ClearCoatRoughness**: 透明涂层的平滑度或粗糙度。定义为0和1之间的标量。
+
+简单给出GLSL中相关实现：
+
+```glsl
+void BRDF(...) {
+    // compute Fd and Fr from standard model
+
+    // remapping and linearization of clear coat roughness
+    clearCoatPerceptualRoughness = clamp(clearCoatPerceptualRoughness, 0.089, 1.0);
+    clearCoatRoughness = clearCoatPerceptualRoughness * clearCoatPerceptualRoughness;
+
+    // clear coat BRDF
+    float  Dc = D_GGX(clearCoatRoughness, NoH);
+    float  Vc = V_Kelemen(clearCoatRoughness, LoH);
+    float  Fc = F_Schlick(0.04, LoH) * clearCoat; // clear coat strength
+    float Frc = (Dc * Vc) * Fc;
+
+    // account for energy loss in the base layer
+    return color * ((Fd + Fr * (1.0 - Fc)) * (1.0 - Fc) + Frc);
+}
+```
+
+最后，透明涂层的存在意味着我们应该重新计算$f_0$，因为它通常是基于空气-材料界面。因此，底层需要根据透明涂层-材料界面来计算$f_0$。
+这一步是通过整合上文的求取$f_0$和$IOR$合并进行的：
+
+$$
+f_{0_{base}} = \frac{(1 - 5\sqrt{f_0})^2}{(5 - \sqrt{f_0})^2}
+$$
+
+另一方面，重新定义映射粗糙度也应当纳入考虑。
+
+### 各向异性模型
+
+之前描述的标准材料模型只能用于各向同性的表面，也就是在所有方向上属性相同的表面。但对于各向异性表面的考虑不可谓不重要。
+
+#### 各向异性镜面BRDF反射
+
+通过修改前文的各向同性BRDF以获得各向异性的GGX NDF函数;
+
+$$
+D_{aniso}(h, \alpha) = \frac{1}{\pi\alpha_t \alpha_b}\frac{1}{((\frac{t\cdot h}{\alpha_t})^2 + (\frac{b\cdot h}{\alpha_b})^2 + (n\cdot h)^2)^2}
+$$
+
+这种NDF依赖于两个补充粗糙度项，沿位切线方向的粗糙度$\alpha_b$和沿切线方向的粗糙度$\alpha_t$,于**Crafting a Next-Gen Material Pipeline for The Order: 1886**提供了一种描述两个粗糙度值之间的关系的各向异性参数：
+
+$$
+\alpha_t = \alpha
+$$
+
+$$
+\alpha_b = lerp(0, \alpha, 1 - anisotropy)
+$$
+
+Disney给出了一个成本略高的方案：
+
+$$
+\alpha_t = \frac{\alpha}{\sqrt{1 - 0.9 \times anistropy}}
+$$
+
+$$
+\alpha_b = \frac{1}{\alpha\sqrt{1 - 0.9 \times anistropy}}
+$$
+
+为了能够展现更直观的高光，filament选择了**Revisiting Physically Based Shading at Imageworks**的方案：
+
+$$
+\alpha_t = \alpha \times (1 + anistropy)
+$$
+
+$$
+\alpha_b = \alpha \times (1 - anistropy)
+$$
+
+除法线方向外，该 NDF 还需要切线和位切线方向。由于法线映射已经需要这些方向，因此提供它们可能不成问题。
+具体的实现为：
+
+```glsl
+float at = max(roughness * (1.0 + anisotropy), 0.001);
+float ab = max(roughness * (1.0 - anisotropy), 0.001);
+
+float D_GGX_Anisotropic(float NoH, const vec3 h,
+        const vec3 t, const vec3 b, float at, float ab) {
+    float ToH = dot(t, h);
+    float BoH = dot(b, h);
+    float a2 = at * ab;
+    highp vec3 v = vec3(ab * ToH, at * BoH, a2 * NoH);
+    highp float v2 = dot(v, v);
+    float w2 = a2 / v2;
+    return a2 * w2 * w2 * (1.0 / PI);
+}
+```
+
+**Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs**给出了针对各向异性的掩码-遮盖函数(masking-shadowing function)，用于匹配高度相关的GGX分布，使用可见度函数优化掩码-遮盖项
+
+$$
+G(\bold{v}, \bold{l}, \bold{h}, \alpha)  = \frac{\chi^+(\bold{v}\cdot\bold{h})\chi^+(\bold{l}\cdot\bold{h})}{1 + \Lambda(\bold{v}) + \Lambda(\bold{l})}
+$$
+
+$$
+\Lambda(\bold{m}) = \frac{-1 + \sqrt{1 + \alpha_0^2\tan^2(\theta_m)}}{2}
+$$
+
+令：
+
+$$
+\alpha_0 = \sqrt{cos^2(\phi_0)\alpha^2_x + sin^2(\phi_0)\alpha^2_y}
+$$
+
+由此得到可见性函数:
+
+$$
+V_aniso(\bold{n} \cdot \bold{l}, \bold{n} \cdot \bold{v}, \alpha) = \frac{1}{2((\bold{n} \cdot \bold{l})\hat{\Lambda}_v + (\bold{n} \cdot \bold{v})\hat{\Lambda}_l)}
+$$
+
+$$
+\hat{\Lambda}_v = \sqrt{\alpha_t^2(\bold{t} \cdot \bold{v})^2 + \alpha_b^2(\bold{b} \cdot \bold{v})^2}
+$$
