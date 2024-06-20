@@ -578,5 +578,146 @@ V_aniso(\bold{n} \cdot \bold{l}, \bold{n} \cdot \bold{v}, \alpha) = \frac{1}{2((
 $$
 
 $$
-\hat{\Lambda}_v = \sqrt{\alpha_t^2(\bold{t} \cdot \bold{v})^2 + \alpha_b^2(\bold{b} \cdot \bold{v})^2}
+\hat{\Lambda}_v = \sqrt{\alpha_t^2(\bold{t} \cdot \bold{v})^2 + \alpha_b^2(\bold{b} \cdot \bold{v})^2 + (\bold{n} \cdot \bold{v})^2}
 $$
+
+$$
+\hat{\Lambda}_l = \sqrt{\alpha_t^2(\bold{t} \cdot \bold{l})^2 + \alpha_b^2(\bold{b} \cdot \bold{l})^2 + (\bold{n} \cdot \bold{l})^2}
+$$
+
+$\hat{\Lambda}_l$对于每种光线都是相同的。具体实现：
+
+```glsl
+float at = max(roughness * (1.0 + anisotropy), 0.001);
+float ab = max(roughness * (1.0 - anisotropy), 0.001);
+
+float V_SmithGGXCorrelated_Anisotropic(float at, float ab, float ToV, float BoV,
+        float ToL, float BoL, float NoV, float NoL) {
+    float lambdaV = NoL * length(vec3(at * ToV, ab * BoV, NoV));
+    float lambdaL = NoV * length(vec3(at * ToL, ab * BoL, NoL));
+    float v = 0.5 / (lambdaV + lambdaL);
+    return saturateMediump(v);
+}
+```
+
+#### 各向异性参数化
+
+针对各向异性的材料提供一个额外的参数$Anisotropy$，其位于[-1, 1]之间。
+负值将使各向异性与位切线方向而非正切方向保持一致。
+
+### 布料反射模型
+
+衣服和织物通常是由松散的线连接而成，会吸收和散射入射光。前面介绍的微面 BRDF 无法很好地再现布料的特性，因为它们的基本假设是表面由随机凹槽组成，这些凹槽的行为就像完美的镜子。与硬质表面相比，布料的特点是镜面叶较软，落差较大，并且存在由前向/后向散射引起的模糊光。有些织物还会呈现双色镜面色彩（例如天鹅绒）。
+天鹅绒是一个有趣的使用案例。由于前向和后向散射，这种布料表现出强烈的边缘光。这些散射事件是由直立在织物表面的纤维造成的。当入射光来自与视线方向相反的方向时，纤维会向前散射光线。同样，当入射光线与视线方向相同时，纤维会向后散射光线。
+
+#### 布料镜面反射
+
+**Distribution-based BRDFs**提出，分布项对BRDF的贡献最大，而对于Ashikhmin and Premoze所提出的的天鹅绒分布而言，阴影/遮蔽项并非必要。分布项本身是一个倒高斯分布。这有助于实现模糊照明（前向和后向散射），同时添加偏移量来模拟前向镜面反射。所谓的天鹅绒NDF定义如下：
+
+$$
+D_{velvet}(v, h, \alpha) = c_{norm}(1 + 4 e^{(\frac{-cot^2\theta_h}{\alpha^2})})
+$$
+
+**Crafting a Next-Gen Material Pipeline for The Order: 1886**提出了该NDF的规范化版本：
+
+$$
+D_{velvet}(v, h, \alpha) = \frac{1}{\pi (1 + 4\alpha^2)}(1 + 4\frac{e^{(\frac{-cot^2\theta_h}{\alpha^2})}}{sin^4 \theta_h})
+$$
+
+并继续采用其全镜面BRDF方案:
+
+$$
+f_r(v, h, \alpha) = \frac{D_{velvet}(v, h, \alpha)}{4(\bold{n}\cdot\bold{l} + \bold{n}\cdot\bold{v} - (\bold{n}\cdot\bold{l})(\bold{n}\cdot\bold{v}))}
+$$
+
+该方案并不包含菲涅尔项。
+Ashikhmin's velvet NDF具体的实现：
+
+```glsl
+float D_Ashikhmin(float roughness, float NoH) {
+    // Ashikhmin 2007, "Distribution-based BRDFs"
+  float a2 = roughness * roughness;
+  float cos2h = NoH * NoH;
+  float sin2h = max(1.0 - cos2h, 0.0078125); // 2^(-14/2), so sin2h^2 > 0 in fp16
+  float sin4h = sin2h * sin2h;
+  float cot2 = -cos2h / (a2 * sin2h);
+  1.0 / (PI * (4.0 * a2 + 1.0) * sin4h) * (4.0 * exp(cot2) + sin4h);
+}
+```
+
+**Production Friendly Microfacet Sheen BRDF**基于指数化正弦曲线而不是倒高斯曲线。这种 NDF 有几个吸引人的原因：其参数化感觉更自然、更直观，外观更柔和，实现也更加简单：
+
+$$
+D(m) = \frac{(2 + \frac{1}{\alpha}sin(\theta)^\frac{1}{\alpha})}{2\pi}
+$$
+
+```glsl
+float D_Charlie(float roughness, float NoH) {
+    // Estevez and Kulla 2017, "Production Friendly Microfacet Sheen BRDF"
+    float invAlpha  = 1.0 / roughness;
+    float cos2h = NoH * NoH;
+    float sin2h = max(1.0 - cos2h, 0.0078125); // 2^(-14/2), so sin2h^2 > 0 in fp16
+    return (2.0 + invAlpha) * pow(sin2h, invAlpha * 0.5) / (2.0 * PI);
+}
+```
+
+filament采取了其NDF并忽略了阴影项。
+
+为了更好地控制布料的外观，并让开发者能够重新创建双色镜面材料，filament引入了直接修改镜面反射率的功能。
+
+#### 布料漫反射
+
+针对于布料的漫反射模型依然依赖于朗伯漫反射模型，目的是为了提供并非基于物理而是为了模拟织物的散射、部分吸收和再发射的效果。
+首先是不包含可选次表面散射的漫反射项:
+
+$$
+f_d(v, h) = \frac{c_{diff}}{\pi}(1 - F(v, h))
+$$
+
+$F(v, h)$是布料镜面BRDF的菲涅尔项，实际开发中依然会选择被省去，这是权衡优化和效果之后的选择。
+
+次表层散射采用能量守恒形式的包裹式漫射照明技术：
+
+$$
+f_d(v, h) = \frac{c_{diff}}{\pi}(1 - F(v,h)) \langle \frac{\bold{n} \cdot \bold{l} + w}{(\bold{l} + w)^2} \rangle \langle c_{subsurface} + \bold{n} \cdot \bold{l}\rangle
+$$
+
+其中，$w$是一个介于0和1之间的值，它定义了漫射光线环绕明暗分界的程度。为了避免引入另一个参数，将$w$固定为0.5。需要注意的是，在使用环绕漫射光时，漫射项不能乘以$\bold{n} \cdot \bold{l}$
+
+织物BRDF的完整实现，包括光泽颜色和可选的次表面散射：
+
+```glsl
+// specular BRDF
+float D = distributionCloth(roughness, NoH);
+float V = visibilityCloth(NoV, NoL);
+vec3  F = sheenColor;
+vec3 Fr = (D * V) * F;
+
+// diffuse BRDF
+float diffuse = diffuse(roughness, NoV, NoL, LoH);
+#if defined(MATERIAL_HAS_SUBSURFACE_COLOR)
+// energy conservative wrap diffuse
+diffuse *= saturate((dot(n, light.l) + 0.5) / 2.25);
+#endif
+vec3 Fd = diffuse * pixel.diffuseColor;
+
+#if defined(MATERIAL_HAS_SUBSURFACE_COLOR)
+// cheap subsurface scatter
+Fd *= saturate(subsurfaceColor + NoL);
+vec3 color = Fd + Fr * NoL;
+color *= (lightIntensity * lightAttenuation) * lightColor;
+#else
+vec3 color = Fd + Fr;
+color *= (lightIntensity * lightAttenuation * NoL) * lightColor;
+#endif
+```
+
+#### 布料反射模型参数
+
+同样，我们需要为该反射模型提供些许参数：
+
+**SheenColor**: 镜面色调，用于创建双色镜面织物（默认值为 0.04，以匹配标准反射率）
+**SubsurfaceColor**: 材料散射和吸收后的漫射色调
+
+要创建类似天鹅绒的材料，可将基色设置为黑色（或深色）。
+色度信息应设置为光泽色。要制作更常见的织物，如牛仔布、棉布等，可将基色用于色度，并使用默认的光泽色或将光泽色设置为基色的亮度。

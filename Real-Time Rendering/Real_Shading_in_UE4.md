@@ -196,7 +196,7 @@ $$
 
 由此，将原始粗糙度从$[0，1]$范围线性缩放到缩小的范围$[0.5，1]$。
 
-## Image Based Lightning
+## Image Based Lighting
 
 IBL相当于一个无限大的球面光源在照射场景。辐射度由生成的一个Environment Map决定。
 
