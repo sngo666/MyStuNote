@@ -17,11 +17,11 @@ Filament是一款基于物理的安卓渲染（PBR）引擎。其目标是为And
 
 选择PBR的原因在于，与传统的实时模型相比，它能更准确地呈现材质及其与光线的相互作用。此外，PBR 方法的核心是将材质和光照分离，这样就能更轻松地创建在所有光照条件下都能准确呈现的逼真资产。
 
-## 材料系统
+## 反射模型
 
 本节将会描述多种材料模型，以简化对各向异性或透明涂层等各种表面特征的描述。但在实际应用中，其中一些模型被浓缩为一个模型。例如，标准模型、透明涂层模型和各向异性模型可以组合成一个更灵活、更强大的模型。
 
-### 标准模型
+### 标准反射
 
 材料模型由双向散射分布函数 BSDF（Bidirectional Scattering Distribution Function）进行数学描述，BSDF 本身由另外两个函数组成：双向反射分布函数 BRDF（Bidirectional Reflectance Distribution Function）和双向透射分布函数 BTDF（Bidirectional Transmittance Function）。
 这些都是老生常谈了(具体见PBRT相关章节)
@@ -721,3 +721,23 @@ color *= (lightIntensity * lightAttenuation * NoL) * lightColor;
 
 要创建类似天鹅绒的材料，可将基色设置为黑色（或深色）。
 色度信息应设置为光泽色。要制作更常见的织物，如牛仔布、棉布等，可将基色用于色度，并使用默认的光泽色或将光泽色设置为基色的亮度。
+
+## 光照系统
+
+虚幻引擎运行美工人员以lumen为单位制定定点光源的亮度，然而定向光源的亮度却使用任意的未命名单位以表示，该单位的数值并不匹配于前者的数值，因此不统一的数值可能会导致设计问题。
+
+照明将主要分为两个方向进行讨论，直接光照和间接光照。
+
+### 单位
+
+**Lumen**: 发光功率$lm$，符号$\Phi$
+**Intensity**: $cd$或者$\frac{lm}{sr}$，符号$I$
+**Irradiance(Illuminance )**: $lx$或者$\frac{lm}{m^2}$, 符号$E$
+**Radiance(Luminance)**: $nt$或者$\frac{cd}{m^2}$, 符号$L$
+**Radiant power**: $W(Watt)$，符号$\Phi_c$
+**Luminous efficacy**: $\frac{lm}{W}$，符号$\eta$
+**Luminous efficiency**: Percentage(%)，符号$V$
+
+要获得适当的相干照明，我们必须使用符合真实世界场景中各种光强之间比例的照明单位。这些光强度差别很大，从家用灯泡的 800lm到日光天空和太阳照明的120,000lx。
+
+对于不同的光源，也应当使用不同的单位，例如太阳光应当考虑照射到大地上的平均水平，而并非其本身的强度并计算到地表的衰减，这样麻烦且无意义。
