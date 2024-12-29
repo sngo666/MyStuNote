@@ -103,7 +103,6 @@ $$
 在上述三类分布函数中，这里的c是一个缩放常量，$\alpha$是一个介于0~1之间用于描述粗糙程度的值，例如0代表一个绝对光滑分布反之1代表完全粗糙或均匀的表面分布。
 初步拟合结果表明$\gamma$的典型值在1和2之间。有趣的是，$\gamma=32$的GTR等价于$\theta=2\theta_h$的Henyey-Greenstein相函数；$2\theta_h$的加倍可以看作是将分布从半球扩展到球体。
 
-
 Beckmann NDF是光学界(optics community)在第一个微表面模型中使用的法线分布函数。当Cook-Torrance BRDF初步提出的时候也是选用Beckmann，现在同样还在使用。Beckmann 归一化之后的法线分布形式如下：
 
 $$

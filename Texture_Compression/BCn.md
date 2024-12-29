@@ -15,7 +15,8 @@ $$
 \begin{align*}
 \mathit{c}_0 & = c0_{\mathit{lo}} + c0_{\mathit{hi}} \times 256 \\
 \mathit{c}_1 & = c1_{\mathit{lo}} + c1_{\mathit{hi}} \times 256 \\
-\mathit{bits} & = \mathit{bits}_0 + 256 \times (\mathit{bits}_1 + 256 \times (\mathit{bits}_2 + 256 \times \mathit{bits}_3)) \end{align*}
+\mathit{bits} & = \mathit{bits}_0 + 256 \times (\mathit{bits}_1 + 256 \times (\mathit{bits}_2 + 256 \times \mathit{bits}_3))
+\end{align*}
 $$
 
 显然，$\mathit{color}_0$和$\mathit{color}_1$都是16位无符号RGB数字，这是非常规的，因为它们被定义为RGB565。
@@ -90,3 +91,43 @@ BC3和BC2类似，仅仅针对alpha通道进行了重新编码，每个allpha图
 ## BC4
 
 BC4~BC5被称为RGTC纹理压缩格式。
+在BC4中每个单通道数据可被编码为64位无符号模式和有符号模式，类似于BC3的alpha通道，使用两个8bit界定两个基本色$RED_0$和$RED_1$，范围为[0，255]。
+
+|                         R value                          |               Condition               |
+| :------------------------------------------------------: | :-----------------------------------: |
+|                         $RED_0$                          |            code(x, y) = 0             |
+|                         $RED_1$                          |            code(x, y) = 1             |
+| $(6\times\mathit{RED}_0 + 1\times\mathit{RED}_1)\over 7$ | $RED_0$ > $RED_1$ and code(x, y) = 2  |
+| $(5\times\mathit{RED}_0 + 2\times\mathit{RED}_1)\over 7$ | $RED_0$ > $RED_1$ and code(x, y) = 3  |
+| $(4\times\mathit{RED}_0 + 3\times\mathit{RED}_1)\over 7$ | $RED_0$ > $RED_1$ and code(x, y) = 4  |
+| $(3\times\mathit{RED}_0 + 4\times\mathit{RED}_1)\over 7$ | $RED_0$ > $RED_1$ and code(x, y) = 5  |
+| $(2\times\mathit{RED}_0 + 5\times\mathit{RED}_1)\over 7$ | $RED_0$ > $RED_1$ and code(x, y) = 6  |
+| $(1\times\mathit{RED}_0 + 6\times\mathit{RED}_1)\over 7$ | $RED_0$ > $RED_1$ and code(x, y) = 7  |
+|                         $RED_0$                          |            code(x, y) = 0             |
+|                         $RED_1$                          |            code(x, y) = 1             |
+| $(4\times\mathit{RED}_0 + 1\times\mathit{RED}_1)\over 5$ | $RED_0$ <= $RED_1$ and code(x, y) = 2 |
+| $(3\times\mathit{RED}_0 + 2\times\mathit{RED}_1)\over 5$ | $RED_0$ <= $RED_1$ and code(x, y) = 3 |
+| $(2\times\mathit{RED}_0 + 3\times\mathit{RED}_1)\over 5$ | $RED_0$ <= $RED_1$ and code(x, y) = 4 |
+| $(1\times\mathit{RED}_0 + 4\times\mathit{RED}_1)\over 5$ | $RED_0$ <= $RED_1$ and code(x, y) = 5 |
+|                       $RED_{min}$                        | $RED_0$ <= $RED_1$ and code(x, y) = 6 |
+|                       $RED_{max}$                        | $RED_0$ <= $RED_1$ and code(x, y) = 7 |
+
+在有符号的场景，区别在于：
+
+$$
+RED_{min} = -1.0 \\
+RED_{max} = 1.0
+$$
+
+对于其他的数，除以127.0进行一一映射。
+
+对于带符号的red0和red1值：当red0 = -127和red1 = -128时，上面的表达式red0 > red1和red0 ≤ red1被视为未定义（读取：可能因实现而异）。这是因为，如果在比较之前将red0重新映射到-127以减少硬件解压缩器的延迟，则表达式将反转其逻辑。签名红绿格式的编码器应避免对red0 = -127和red1 = -128的块进行编码。
+
+## BC5
+
+每个4×4纹素块由64位压缩的无符号红色图像数据组成，后跟64位压缩的无符号绿色图像数据。
+压缩红色的前64位的解码方式与上面的BC4 unsigned完全相同。压缩绿色的第二个64位的解码方式与上面的无符号BC4完全相同，只是第二个块的解码值R被视为最终的绿色值G。
+
+由于解码后的纹素具有红绿格式，因此纹素的最终RGBA值为(R, G, 0, 1)。
+对有符号的版本，采取的编码方式与BC4一样。
+
